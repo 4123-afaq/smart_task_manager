@@ -1,1 +1,1 @@
-[{"username":"Muhammad Afaq","password":"AFAQRANA123"},{"username":"Abdul Rehman ","password":"41235"}]
+[{"username":"Muhammad Afaq","password":"AFAQRANA123","role":"admin"},{"username":"Abdul Rehman ","password":"4123","role":"user"},{"username":"Abdul Mannan","password":"6123","role":"user"},{"username":"Anas","password":"5123","role":"user"},{"username":"anas","password":"5123","role":"user"},{"username":"mani","password":"3327","role":"user"}]

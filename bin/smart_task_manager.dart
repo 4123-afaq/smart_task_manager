@@ -1,20 +1,23 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 
 // ----------------- User Class -----------------
 class User {
   String username;
   String password;
+  String role; // "user" or "admin"
 
-  User(this.username, this.password);
+  User(this.username, this.password, this.role);
 
   Map<String, dynamic> toJson() => {
         'username': username,
         'password': password,
+        'role': role,
       };
 
   factory User.fromJson(Map<String, dynamic> json) {
-    return User(json['username'], json['password']);
+    return User(json['username'], json['password'], json['role']);
   }
 }
 
@@ -44,21 +47,21 @@ class UserManager {
     file.writeAsStringSync(jsonEncode(users.map((u) => u.toJson()).toList()));
   }
 
-  bool register(String username, String password) {
+  bool register(String username, String password, String role) {
     if (users.any((u) => u.username == username)) {
       print("❌ Username already exists!");
       return false;
     }
-    users.add(User(username, password));
+    users.add(User(username, password, role));
     saveUsers();
-    print("✅ Registered successfully!");
+    print("✅ Registered successfully as $role!");
     return true;
   }
 
   User? login(String username, String password) {
     for (var u in users) {
       if (u.username == username && u.password == password) {
-        print("✅ Login successful! Welcome $username.\n");
+        print("✅ Login successful! Welcome ${u.username} (${u.role}).\n");
         return u;
       }
     }
@@ -73,12 +76,12 @@ class Task {
   int id;
   String title;
   String description;
-  String dueDate;
+  DateTime dueDateTime;
   String priority;
   String status;
-  String owner; // username who owns the task
+  String owner;
 
-  Task(this.title, this.description, this.dueDate, this.priority, this.owner,
+  Task(this.title, this.description, this.dueDateTime, this.priority, this.owner,
       {this.status = "Pending"})
       : id = _idCounter++;
 
@@ -86,7 +89,7 @@ class Task {
         'id': id,
         'title': title,
         'description': description,
-        'dueDate': dueDate,
+        'dueDateTime': dueDateTime.toIso8601String(),
         'priority': priority,
         'status': status,
         'owner': owner,
@@ -96,7 +99,7 @@ class Task {
     var task = Task(
       json['title'],
       json['description'],
-      json['dueDate'],
+      DateTime.parse(json['dueDateTime']),
       json['priority'],
       json['owner'],
       status: json['status'],
@@ -110,7 +113,7 @@ class Task {
 
   @override
   String toString() {
-    return "[$id] $title | $priority | $status | Due: $dueDate";
+    return "[$id] $title | $priority | $status | Due: $dueDateTime";
   }
 }
 
@@ -121,6 +124,7 @@ class TaskManager {
 
   TaskManager() {
     loadTasks();
+    startReminderService();
   }
 
   void loadTasks() {
@@ -143,25 +147,42 @@ class TaskManager {
   void createTask(User user) {
     stdout.write("Enter Task Title: ");
     String title = stdin.readLineSync() ?? "";
+
     stdout.write("Enter Description: ");
     String desc = stdin.readLineSync() ?? "";
-    stdout.write("Enter Due Date (YYYYMMDD): ");
-    String dueDate = stdin.readLineSync() ?? "";
-    stdout.write("Enter Priority (High/Medium/Low): ");
-    String priority = stdin.readLineSync() ?? "";
 
-    tasks.add(Task(title, desc, dueDate, priority, user.username));
+    DateTime? dueDateTime;
+    while (true) {
+      stdout.write("Enter Due Date & Time (YYYY-MM-DD HH:MM): ");
+      String input = stdin.readLineSync() ?? "";
+      try {
+        dueDateTime = DateTime.parse(input.replaceFirst(" ", "T"));
+        if (dueDateTime.isBefore(DateTime.now())) {
+          print("❌ You cannot enter a past date & time. Try again.");
+        } else {
+          break;
+        }
+      } catch (e) {
+        print("❌ Invalid format. Please try again.");
+      }
+    }
+
+    stdout.write("Enter Priority (High/Medium/Low): ");
+    String priority = stdin.readLineSync() ?? "Low";
+
+    tasks.add(Task(title, desc, dueDateTime, priority, user.username));
     saveTasks();
     print("✅ Task Created Successfully!");
   }
 
   void listTasks(User user) {
-    var userTasks = tasks.where((t) => t.owner == user.username).toList();
+    var userTasks =
+        user.role == "admin" ? tasks : tasks.where((t) => t.owner == user.username).toList();
     if (userTasks.isEmpty) {
       print("No tasks available.");
       return;
     }
-    print("\n---- Your Tasks ----");
+    print("\n---- ${user.role == "admin" ? "All Tasks" : "Your Tasks"} ----");
     for (var t in userTasks) {
       print(t);
     }
@@ -172,13 +193,13 @@ class TaskManager {
     stdout.write("Enter Task ID to update: ");
     int? id = int.tryParse(stdin.readLineSync() ?? "");
     var task = tasks.firstWhere(
-        (t) => t.id == id && t.owner == user.username,
-        orElse: () => Task("", "", "", "", user.username));
+      (t) => t.id == id && (user.role == "admin" || t.owner == user.username),
+      orElse: () => Task("", "", DateTime.now(), "", user.username),
+    );
     if (task.title == "") {
       print("❌ Task not found.");
       return;
     }
-
     stdout.write("Update Status (Pending/Done): ");
     task.status = stdin.readLineSync() ?? task.status;
     saveTasks();
@@ -189,7 +210,8 @@ class TaskManager {
     listTasks(user);
     stdout.write("Enter Task ID to delete: ");
     int? id = int.tryParse(stdin.readLineSync() ?? "");
-    tasks.removeWhere((t) => t.id == id && t.owner == user.username);
+    tasks.removeWhere(
+        (t) => t.id == id && (user.role == "admin" || t.owner == user.username));
     saveTasks();
     print("✅ Task Deleted!");
   }
@@ -197,7 +219,8 @@ class TaskManager {
   void searchTask(User user) {
     stdout.write("Enter keyword or ID: ");
     String input = stdin.readLineSync() ?? "";
-    var userTasks = tasks.where((t) => t.owner == user.username).toList();
+    var userTasks =
+        user.role == "admin" ? tasks : tasks.where((t) => t.owner == user.username).toList();
     var results = userTasks.where((t) =>
         t.title.contains(input) ||
         t.description.contains(input) ||
@@ -213,15 +236,16 @@ class TaskManager {
   }
 
   void sortTasks(User user) {
-    var userTasks = tasks.where((t) => t.owner == user.username).toList();
+    var userTasks =
+        user.role == "admin" ? tasks : tasks.where((t) => t.owner == user.username).toList();
     if (userTasks.isEmpty) {
       print("No tasks to sort.");
       return;
     }
-    print("Sort by: 1. Deadline  2. Priority  3. ID");
+    print("Sort by: 1. Deadline 2. Priority 3. ID");
     String? choice = stdin.readLineSync();
     if (choice == "1") {
-      userTasks.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+      userTasks.sort((a, b) => a.dueDateTime.compareTo(b.dueDateTime));
     } else if (choice == "2") {
       userTasks.sort((a, b) => a.priority.compareTo(b.priority));
     } else {
@@ -232,12 +256,26 @@ class TaskManager {
       print(t);
     }
   }
+
+  // 🔔 Background Reminder Service
+  void startReminderService() {
+    Timer.periodic(Duration(minutes: 1), (timer) {
+      DateTime now = DateTime.now();
+      for (var task in tasks) {
+        if (task.status == "Pending") {
+          Duration diff = task.dueDateTime.difference(now);
+          if (diff.inMinutes == 5) {
+            print("\n⏰ Reminder: Task '${task.title}' (ID: ${task.id}) is due in 5 minutes!");
+          }
+        }
+      }
+    });
+  }
 }
 
 // ----------------- Smart Task Manager Console -----------------
 void smartTaskManager(User user, TaskManager taskManager) {
-  print("📋 Smart Task Manager ready for ${user.username}!");
-
+  print("📋 Smart Task Manager ready for ${user.username} (${user.role})!");
   while (true) {
     print("\n--- Task Manager Menu ---");
     print("1. Create Task");
@@ -289,19 +327,19 @@ void main() {
       String username = stdin.readLineSync() ?? "";
       stdout.write("Enter Password: ");
       String password = stdin.readLineSync() ?? "";
-      userManager.register(username, password);
-
+      stdout.write("Register as (admin/user): ");
+      String role = stdin.readLineSync() ?? "user";
+      if (role != "admin" && role != "user") role = "user";
+      userManager.register(username, password, role);
     } else if (choice == "2") {
       stdout.write("Enter Username: ");
       String username = stdin.readLineSync() ?? "";
       stdout.write("Enter Password: ");
       String password = stdin.readLineSync() ?? "";
       User? currentUser = userManager.login(username, password);
-
       if (currentUser != null) {
         smartTaskManager(currentUser, taskManager);
       }
-
     } else if (choice == "3") {
       print("Goodbye!");
       break;
